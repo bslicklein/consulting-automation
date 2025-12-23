@@ -1,37 +1,96 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase';
-import { createElevenLabsClient } from '@/lib/elevenlabs';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize clients directly to avoid type issues
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY!;
+const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY!;
+const interviewAgentId = process.env.ELEVENLABS_INTERVIEW_AGENT_ID!;
+
+const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
+
+// ElevenLabs API helpers
+async function fetchElevenLabs(endpoint: string) {
+  const response = await fetch(`${ELEVENLABS_BASE_URL}${endpoint}`, {
+    headers: {
+      'xi-api-key': elevenLabsApiKey,
+      'Content-Type': 'application/json',
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`ElevenLabs API error: ${response.status}`);
+  }
+  
+  return response.json();
+}
+
+async function getConversations(agentId: string) {
+  const data = await fetchElevenLabs(`/convai/conversations?agent_id=${agentId}`);
+  return data.conversations || [];
+}
+
+async function getConversation(conversationId: string) {
+  return fetchElevenLabs(`/convai/conversations/${conversationId}`);
+}
+
+function formatTranscript(transcript: Array<{ role: string; message: string }>): string {
+  if (!transcript || transcript.length === 0) return '';
+  
+  return transcript
+    .map((msg) => {
+      const speaker = msg.role === 'agent' ? 'Interviewer' : 'Stakeholder';
+      return `${speaker}: ${msg.message}`;
+    })
+    .join('\n\n');
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerClient();
-    const elevenlabs = createElevenLabsClient();
-    
-    const agentId = process.env.ELEVENLABS_INTERVIEW_AGENT_ID;
-    
-    if (!agentId) {
+    // Validate environment variables
+    if (!supabaseUrl || !supabaseServiceKey) {
       return NextResponse.json(
-        { error: 'ELEVENLABS_INTERVIEW_AGENT_ID not configured' },
+        { error: 'Supabase not configured' },
+        { status: 500 }
+      );
+    }
+    
+    if (!elevenLabsApiKey || !interviewAgentId) {
+      return NextResponse.json(
+        { error: 'ElevenLabs not configured' },
         { status: 500 }
       );
     }
 
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
     // Fetch all conversations from ElevenLabs
-    const { conversations } = await elevenlabs.listConversations(agentId);
+    const conversations = await getConversations(interviewAgentId);
 
     // Get existing conversation IDs from Supabase
-    const { data: existingInterviews } = await supabase
+    const { data: existingInterviews, error: fetchError } = await supabase
       .from('interviews')
       .select('elevenlabs_conversation_id')
       .not('elevenlabs_conversation_id', 'is', null);
 
-    const existingIds = new Set(
-      existingInterviews?.map(i => i.elevenlabs_conversation_id) || []
-    );
+    if (fetchError) {
+      console.error('Error fetching existing interviews:', fetchError);
+    }
+
+    // Create set of existing IDs
+    const existingIds = new Set<string>();
+    if (existingInterviews) {
+      for (const interview of existingInterviews) {
+        const convId = (interview as { elevenlabs_conversation_id: string | null }).elevenlabs_conversation_id;
+        if (convId) {
+          existingIds.add(convId);
+        }
+      }
+    }
 
     // Find new conversations
     const newConversations = conversations.filter(
-      c => !existingIds.has(c.conversation_id)
+      (c: { conversation_id: string }) => !existingIds.has(c.conversation_id)
     );
 
     const results = {
@@ -44,50 +103,26 @@ export async function POST(request: NextRequest) {
     for (const conv of newConversations) {
       try {
         // Fetch full conversation with transcript
-        const fullConv = await elevenlabs.getConversation(conv.conversation_id);
-        const transcriptText = await elevenlabs.getTranscriptText(conv.conversation_id);
+        const fullConv = await getConversation(conv.conversation_id);
+        const transcriptText = formatTranscript(fullConv.transcript || []);
 
-        // Check if there's an existing interview waiting for this conversation
-        const { data: pendingInterview } = await supabase
+        // Create new interview record
+        const { error: insertError } = await supabase
           .from('interviews')
-          .select('*')
-          .eq('elevenlabs_agent_id', agentId)
-          .is('elevenlabs_conversation_id', null)
-          .eq('status', 'scheduled')
-          .order('scheduled_at', { ascending: true })
-          .limit(1)
-          .single();
+          .insert({
+            elevenlabs_conversation_id: conv.conversation_id,
+            elevenlabs_agent_id: interviewAgentId,
+            transcript_raw: fullConv.transcript,
+            transcript_text: transcriptText,
+            status: 'transcribed',
+            interview_type: 'discovery',
+            started_at: conv.start_time || null,
+            ended_at: fullConv.end_time || null,
+          });
 
-        if (pendingInterview) {
-          // Update existing interview with transcript
-          await supabase
-            .from('interviews')
-            .update({
-              elevenlabs_conversation_id: conv.conversation_id,
-              transcript_raw: fullConv.transcript,
-              transcript_text: transcriptText,
-              status: 'transcribed',
-              started_at: conv.start_time,
-              ended_at: fullConv.end_time,
-            })
-            .eq('id', pendingInterview.id);
-
-          results.updated++;
+        if (insertError) {
+          results.errors.push(`Failed to insert ${conv.conversation_id}: ${insertError.message}`);
         } else {
-          // Create new interview record (unlinked to a project for now)
-          await supabase
-            .from('interviews')
-            .insert({
-              elevenlabs_conversation_id: conv.conversation_id,
-              elevenlabs_agent_id: agentId,
-              transcript_raw: fullConv.transcript,
-              transcript_text: transcriptText,
-              status: 'transcribed',
-              interview_type: 'discovery',
-              started_at: conv.start_time,
-              ended_at: fullConv.end_time,
-            });
-
           results.synced++;
         }
       } catch (error) {
@@ -95,34 +130,37 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Also update any existing interviews that are missing transcripts
+    // Update any existing interviews that are missing transcripts
     const { data: incompleteInterviews } = await supabase
       .from('interviews')
-      .select('*')
+      .select('id, elevenlabs_conversation_id')
       .not('elevenlabs_conversation_id', 'is', null)
       .is('transcript_text', null);
 
-    for (const interview of incompleteInterviews || []) {
-      try {
-        const transcriptText = await elevenlabs.getTranscriptText(
-          interview.elevenlabs_conversation_id!
-        );
-        const fullConv = await elevenlabs.getConversation(
-          interview.elevenlabs_conversation_id!
-        );
+    if (incompleteInterviews) {
+      for (const interview of incompleteInterviews) {
+        const rec = interview as { id: string; elevenlabs_conversation_id: string | null };
+        if (!rec.elevenlabs_conversation_id) continue;
+        
+        try {
+          const fullConv = await getConversation(rec.elevenlabs_conversation_id);
+          const transcriptText = formatTranscript(fullConv.transcript || []);
 
-        await supabase
-          .from('interviews')
-          .update({
-            transcript_raw: fullConv.transcript,
-            transcript_text: transcriptText,
-            status: 'transcribed',
-          })
-          .eq('id', interview.id);
+          const { error: updateError } = await supabase
+            .from('interviews')
+            .update({
+              transcript_raw: fullConv.transcript,
+              transcript_text: transcriptText,
+              status: 'transcribed',
+            })
+            .eq('id', rec.id);
 
-        results.updated++;
-      } catch (error) {
-        results.errors.push(`Failed to update ${interview.id}: ${error}`);
+          if (!updateError) {
+            results.updated++;
+          }
+        } catch (error) {
+          results.errors.push(`Failed to update ${rec.id}: ${error}`);
+        }
       }
     }
 
@@ -143,22 +181,20 @@ export async function POST(request: NextRequest) {
 // GET endpoint to check sync status
 export async function GET() {
   try {
-    const elevenlabs = createElevenLabsClient();
-    const agentId = process.env.ELEVENLABS_INTERVIEW_AGENT_ID;
-
-    if (!agentId) {
+    if (!elevenLabsApiKey || !interviewAgentId) {
       return NextResponse.json(
-        { error: 'ELEVENLABS_INTERVIEW_AGENT_ID not configured' },
+        { error: 'ElevenLabs not configured' },
         { status: 500 }
       );
     }
 
-    const { conversations } = await elevenlabs.listConversations(agentId);
+    const conversations = await getConversations(interviewAgentId);
+    const interviewUrl = `https://elevenlabs.io/app/talk-to?agent_id=${interviewAgentId}`;
 
     return NextResponse.json({
-      agentId,
+      agentId: interviewAgentId,
       totalConversations: conversations.length,
-      interviewUrl: elevenlabs.getInterviewUrl(agentId),
+      interviewUrl,
     });
   } catch (error) {
     return NextResponse.json(
