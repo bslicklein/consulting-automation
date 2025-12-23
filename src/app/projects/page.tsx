@@ -37,16 +37,8 @@ const BOARD_COLUMNS = [
   { id: 'done', label: 'Done', statuses: ['completed', 'on_hold'] },
 ];
 
-interface ProjectData {
-  id: string;
-  name: string;
-  status: string;
-  updated_at: string;
-  organization: { name: string } | null;
-}
-
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [searchQuery, setSearchQuery] = useState('');
@@ -65,15 +57,25 @@ export default function ProjectsPage() {
     if (error) {
       console.error('Error fetching projects:', error);
     } else {
-      setProjects((data || []) as ProjectData[]);
+      setProjects(data || []);
     }
     setLoading(false);
   }
 
-  const filteredProjects = projects.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.organization?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Helper to get org name (handles array or object)
+  function getOrgName(project: any) {
+    if (!project.organization) return null;
+    if (Array.isArray(project.organization)) {
+      return project.organization[0]?.name || null;
+    }
+    return project.organization.name || null;
+  }
+
+  const filteredProjects = projects.filter(p => {
+    const orgName = getOrgName(p) || '';
+    return p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+           orgName.toLowerCase().includes(searchQuery.toLowerCase());
+  });
 
   const getProjectsForColumn = (column: typeof BOARD_COLUMNS[0]) => {
     return filteredProjects.filter(p => column.statuses.includes(p.status));
@@ -140,7 +142,7 @@ export default function ProjectsPage() {
                 </div>
                 <div className="space-y-3">
                   {getProjectsForColumn(column).map((project) => (
-                    <ProjectCard key={project.id} project={project} />
+                    <ProjectCard key={project.id} project={project} getOrgName={getOrgName} />
                   ))}
                   {getProjectsForColumn(column).length === 0 && (
                     <div className="text-center py-8 text-gray-400 text-sm">
@@ -173,7 +175,7 @@ export default function ProjectsPage() {
                     </Link>
                   </td>
                   <td className="px-6 py-4 text-gray-600">
-                    {project.organization?.name || '-'}
+                    {getOrgName(project) || '-'}
                   </td>
                   <td className="px-6 py-4">
                     <StatusBadge status={project.status} />
@@ -201,9 +203,10 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: ProjectData }) {
+function ProjectCard({ project, getOrgName }: { project: any; getOrgName: (p: any) => string | null }) {
   const config = STATUS_CONFIG[project.status] || STATUS_CONFIG['discovery'];
   const isReview = ['review_findings', 'review_prd', 'review_qa'].includes(project.status);
+  const orgName = getOrgName(project);
 
   return (
     <Link href={`/projects/${project.id}`}>
@@ -215,8 +218,8 @@ function ProjectCard({ project }: { project: ProjectData }) {
           </div>
         )}
         <h4 className="font-medium text-gray-900 mb-1">{project.name}</h4>
-        {project.organization && (
-          <p className="text-sm text-gray-500 mb-2">{project.organization.name}</p>
+        {orgName && (
+          <p className="text-sm text-gray-500 mb-2">{orgName}</p>
         )}
         <div className="flex items-center justify-between">
           <StatusBadge status={project.status} size="sm" />

@@ -50,68 +50,16 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; description:
   on_hold: { label: 'On Hold', color: 'gray', description: 'Project is paused' },
 };
 
-interface ProjectData {
-  id: string;
-  name: string;
-  description: string | null;
-  status: string;
-  findings_approved: boolean;
-  findings_approved_at: string | null;
-  prd_approved: boolean;
-  prd_approved_at: string | null;
-  qa_approved: boolean;
-  qa_approved_at: string | null;
-  created_at: string;
-  updated_at: string;
-  organization: { name: string } | null;
-}
-
-interface InterviewData {
-  id: string;
-  status: string;
-  interview_url: string | null;
-  stakeholder: { name: string; role: string } | null;
-}
-
-interface FindingData {
-  id: string;
-  finding_type: string;
-  title: string;
-  description: string;
-  impact_level: number;
-}
-
-interface TaskData {
-  id: string;
-  title: string;
-  status: string;
-  task_type: string;
-}
-
-interface AssetData {
-  id: string;
-  name: string;
-  google_drive_url: string | null;
-  figma_url: string | null;
-}
-
-interface PrdData {
-  id: string;
-  title: string;
-  version: number;
-  status: string;
-}
-
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
 
-  const [project, setProject] = useState<ProjectData | null>(null);
-  const [interviews, setInterviews] = useState<InterviewData[]>([]);
-  const [findings, setFindings] = useState<FindingData[]>([]);
-  const [prds, setPrds] = useState<PrdData[]>([]);
-  const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [assets, setAssets] = useState<AssetData[]>([]);
+  const [project, setProject] = useState<any>(null);
+  const [interviews, setInterviews] = useState<any[]>([]);
+  const [findings, setFindings] = useState<any[]>([]);
+  const [prds, setPrds] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [assets, setAssets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -131,7 +79,7 @@ export default function ProjectDetailPage() {
       .single();
 
     if (projectData) {
-      setProject(projectData as ProjectData);
+      setProject(projectData);
     }
 
     const [interviewsRes, findingsRes, prdsRes, tasksRes, assetsRes] = await Promise.all([
@@ -142,11 +90,11 @@ export default function ProjectDetailPage() {
       supabase.from('assets').select('id, name, google_drive_url, figma_url').eq('project_id', projectId),
     ]);
 
-    setInterviews((interviewsRes.data || []) as InterviewData[]);
-    setFindings((findingsRes.data || []) as FindingData[]);
-    setPrds((prdsRes.data || []) as PrdData[]);
-    setTasks((tasksRes.data || []) as TaskData[]);
-    setAssets((assetsRes.data || []) as AssetData[]);
+    setInterviews(interviewsRes.data || []);
+    setFindings(findingsRes.data || []);
+    setPrds(prdsRes.data || []);
+    setTasks(tasksRes.data || []);
+    setAssets(assetsRes.data || []);
     setLoading(false);
   }
 
@@ -202,6 +150,16 @@ export default function ProjectDetailPage() {
     setActionLoading(false);
   }
 
+  // Helper to get stakeholder info (handles array from Supabase)
+  function getStakeholder(interview: any) {
+    if (!interview.stakeholder) return null;
+    // Supabase returns single relations as objects, but sometimes as arrays
+    if (Array.isArray(interview.stakeholder)) {
+      return interview.stakeholder[0] || null;
+    }
+    return interview.stakeholder;
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -229,6 +187,9 @@ export default function ProjectDetailPage() {
   const currentIndex = STATUS_FLOW.indexOf(project.status);
   const isReviewStage = ['review_findings', 'review_prd', 'review_qa'].includes(project.status);
 
+  // Handle organization (could be array or object)
+  const orgName = project.organization?.name || (Array.isArray(project.organization) ? project.organization[0]?.name : null);
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -241,10 +202,10 @@ export default function ProjectDetailPage() {
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">{project.name}</h1>
-            {project.organization && (
+            {orgName && (
               <p className="text-gray-600 mt-1 flex items-center gap-2">
                 <Building2 size={16} />
-                {project.organization.name}
+                {orgName}
               </p>
             )}
           </div>
@@ -339,28 +300,31 @@ export default function ProjectDetailPage() {
               <EmptyState message="No interviews yet" />
             ) : (
               <div className="space-y-3">
-                {interviews.map((interview) => (
-                  <div key={interview.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="font-medium">{interview.stakeholder?.name || 'Unknown'}</p>
-                      <p className="text-sm text-gray-500">{interview.stakeholder?.role}</p>
+                {interviews.map((interview) => {
+                  const stakeholder = getStakeholder(interview);
+                  return (
+                    <div key={interview.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div>
+                        <p className="font-medium">{stakeholder?.name || 'Unknown'}</p>
+                        <p className="text-sm text-gray-500">{stakeholder?.role || ''}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          interview.status === 'analyzed' ? 'bg-green-100 text-green-700' :
+                          interview.status === 'transcribed' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {interview.status}
+                        </span>
+                        {interview.interview_url && (
+                          <a href={interview.interview_url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink size={16} className="text-gray-400 hover:text-blue-600" />
+                          </a>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-2 py-1 rounded-full ${
-                        interview.status === 'analyzed' ? 'bg-green-100 text-green-700' :
-                        interview.status === 'transcribed' ? 'bg-blue-100 text-blue-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>
-                        {interview.status}
-                      </span>
-                      {interview.interview_url && (
-                        <a href={interview.interview_url} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink size={16} className="text-gray-400 hover:text-blue-600" />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Section>
@@ -381,7 +345,7 @@ export default function ProjectDetailPage() {
                           finding.finding_type === 'automation_candidate' ? 'bg-blue-100 text-blue-700' :
                           'bg-gray-100 text-gray-700'
                         }`}>
-                          {finding.finding_type.replace('_', ' ')}
+                          {(finding.finding_type || '').replace('_', ' ')}
                         </span>
                         <p className="font-medium mt-2">{finding.title}</p>
                         <p className="text-sm text-gray-500 mt-1 line-clamp-2">{finding.description}</p>

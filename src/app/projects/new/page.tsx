@@ -6,15 +6,9 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { ArrowLeft, Plus } from 'lucide-react';
 
-interface OrganizationData {
-  id: string;
-  name: string;
-  industry: string | null;
-}
-
 export default function NewProjectPage() {
   const router = useRouter();
-  const [organizations, setOrganizations] = useState<OrganizationData[]>([]);
+  const [organizations, setOrganizations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showNewOrg, setShowNewOrg] = useState(false);
 
@@ -35,7 +29,7 @@ export default function NewProjectPage() {
       .from('organizations')
       .select('id, name, industry')
       .order('name');
-    setOrganizations((data || []) as OrganizationData[]);
+    setOrganizations(data || []);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -56,7 +50,7 @@ export default function NewProjectPage() {
           .single();
 
         if (orgError) throw orgError;
-        orgId = (newOrg as { id: string }).id;
+        orgId = newOrg?.id;
       }
 
       const { data: project, error: projectError } = await supabase
@@ -72,7 +66,7 @@ export default function NewProjectPage() {
 
       if (projectError) throw projectError;
 
-      router.push(`/projects/${(project as { id: string }).id}`);
+      router.push(`/projects/${project?.id}`);
     } catch (error) {
       console.error('Error creating project:', error);
       alert('Failed to create project');
