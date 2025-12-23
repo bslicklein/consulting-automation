@@ -1,14 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { Project, Interview, Finding, PRD, Task, Asset, ProjectStatus } from '@/types/database';
 import { 
   ArrowLeft,
   Building2,
-  Calendar,
   CheckCircle,
   Clock,
   FileText,
@@ -18,11 +16,10 @@ import {
   AlertCircle,
   ExternalLink,
   Play,
-  Pause,
-  RotateCcw
+  Pause
 } from 'lucide-react';
 
-const STATUS_FLOW: ProjectStatus[] = [
+const STATUS_FLOW = [
   'discovery',
   'analysis',
   'review_findings',
@@ -37,7 +34,7 @@ const STATUS_FLOW: ProjectStatus[] = [
   'completed'
 ];
 
-const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; description: string }> = {
+const STATUS_CONFIG: Record<string, { label: string; color: string; description: string }> = {
   discovery: { label: 'Discovery', color: 'blue', description: 'Conducting stakeholder interviews' },
   analysis: { label: 'Analysis', color: 'purple', description: 'Analyzing interview transcripts' },
   review_findings: { label: 'Review Findings', color: 'yellow', description: 'Review and approve findings before proceeding' },
@@ -53,17 +50,68 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; descr
   on_hold: { label: 'On Hold', color: 'gray', description: 'Project is paused' },
 };
 
+interface ProjectData {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  findings_approved: boolean;
+  findings_approved_at: string | null;
+  prd_approved: boolean;
+  prd_approved_at: string | null;
+  qa_approved: boolean;
+  qa_approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  organization: { name: string } | null;
+}
+
+interface InterviewData {
+  id: string;
+  status: string;
+  interview_url: string | null;
+  stakeholder: { name: string; role: string } | null;
+}
+
+interface FindingData {
+  id: string;
+  finding_type: string;
+  title: string;
+  description: string;
+  impact_level: number;
+}
+
+interface TaskData {
+  id: string;
+  title: string;
+  status: string;
+  task_type: string;
+}
+
+interface AssetData {
+  id: string;
+  name: string;
+  google_drive_url: string | null;
+  figma_url: string | null;
+}
+
+interface PrdData {
+  id: string;
+  title: string;
+  version: number;
+  status: string;
+}
+
 export default function ProjectDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params.id as string;
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [interviews, setInterviews] = useState<Interview[]>([]);
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [prds, setPrds] = useState<PRD[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [assets, setAssets] = useState<Asset[]>([]);
+  const [project, setProject] = useState<ProjectData | null>(null);
+  const [interviews, setInterviews] = useState<InterviewData[]>([]);
+  const [findings, setFindings] = useState<FindingData[]>([]);
+  const [prds, setPrds] = useState<PrdData[]>([]);
+  const [tasks, setTasks] = useState<TaskData[]>([]);
+  const [assets, setAssets] = useState<AssetData[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -76,92 +124,81 @@ export default function ProjectDetailPage() {
   async function fetchProjectData() {
     setLoading(true);
 
-    // Fetch project with organization
     const { data: projectData } = await supabase
       .from('projects')
-      .select('*, organization:organizations(*)')
+      .select('*, organization:organizations(name)')
       .eq('id', projectId)
       .single();
 
     if (projectData) {
-      setProject(projectData as unknown as Project);
+      setProject(projectData as ProjectData);
     }
 
-    // Fetch related data
     const [interviewsRes, findingsRes, prdsRes, tasksRes, assetsRes] = await Promise.all([
-      supabase.from('interviews').select('*, stakeholder:stakeholders(*)').eq('project_id', projectId),
-      supabase.from('findings').select('*').eq('project_id', projectId),
-      supabase.from('prds').select('*').eq('project_id', projectId),
-      supabase.from('tasks').select('*').eq('project_id', projectId),
-      supabase.from('assets').select('*').eq('project_id', projectId),
+      supabase.from('interviews').select('id, status, interview_url, stakeholder:stakeholders(name, role)').eq('project_id', projectId),
+      supabase.from('findings').select('id, finding_type, title, description, impact_level').eq('project_id', projectId),
+      supabase.from('prds').select('id, title, version, status').eq('project_id', projectId),
+      supabase.from('tasks').select('id, title, status, task_type').eq('project_id', projectId),
+      supabase.from('assets').select('id, name, google_drive_url, figma_url').eq('project_id', projectId),
     ]);
 
-    setInterviews((interviewsRes.data || []) as unknown as Interview[]);
-    setFindings((findingsRes.data || []) as unknown as Finding[]);
-    setPrds((prdsRes.data || []) as unknown as PRD[]);
-    setTasks((tasksRes.data || []) as unknown as Task[]);
-    setAssets((assetsRes.data || []) as unknown as Asset[]);
+    setInterviews((interviewsRes.data || []) as InterviewData[]);
+    setFindings((findingsRes.data || []) as FindingData[]);
+    setPrds((prdsRes.data || []) as PrdData[]);
+    setTasks((tasksRes.data || []) as TaskData[]);
+    setAssets((assetsRes.data || []) as AssetData[]);
     setLoading(false);
   }
 
   async function approveFindings() {
     setActionLoading(true);
-    // Use direct update instead of RPC to avoid type issues
-    const { error } = await supabase
+    await supabase
       .from('projects')
       .update({ 
         findings_approved: true, 
         findings_approved_at: new Date().toISOString(),
-        status: 'documentation' as ProjectStatus
+        status: 'documentation'
       })
       .eq('id', projectId);
-    if (!error) {
-      await fetchProjectData();
-    }
+    await fetchProjectData();
     setActionLoading(false);
   }
 
   async function approvePrd() {
     setActionLoading(true);
-    const { error } = await supabase
+    await supabase
       .from('projects')
       .update({ 
         prd_approved: true, 
         prd_approved_at: new Date().toISOString(),
-        status: 'task_breakdown' as ProjectStatus
+        status: 'task_breakdown'
       })
       .eq('id', projectId);
-    if (!error) {
-      await fetchProjectData();
-    }
+    await fetchProjectData();
     setActionLoading(false);
   }
 
   async function approveQa() {
     setActionLoading(true);
-    const { error } = await supabase
+    await supabase
       .from('projects')
       .update({ 
         qa_approved: true, 
         qa_approved_at: new Date().toISOString(),
-        status: 'user_testing' as ProjectStatus
+        status: 'user_testing'
       })
       .eq('id', projectId);
-    if (!error) {
-      await fetchProjectData();
-    }
+    await fetchProjectData();
     setActionLoading(false);
   }
 
-  async function updateStatus(newStatus: ProjectStatus) {
+  async function updateStatus(newStatus: string) {
     setActionLoading(true);
-    const { error } = await supabase
+    await supabase
       .from('projects')
       .update({ status: newStatus })
       .eq('id', projectId);
-    if (!error) {
-      await fetchProjectData();
-    }
+    await fetchProjectData();
     setActionLoading(false);
   }
 
@@ -188,7 +225,7 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const config = STATUS_CONFIG[project.status];
+  const config = STATUS_CONFIG[project.status] || STATUS_CONFIG['discovery'];
   const currentIndex = STATUS_FLOW.indexOf(project.status);
   const isReviewStage = ['review_findings', 'review_prd', 'review_qa'].includes(project.status);
 
@@ -247,7 +284,6 @@ export default function ProjectDetailPage() {
             <p className="text-gray-600">{config.description}</p>
           </div>
           
-          {/* Approval Buttons */}
           {project.status === 'review_findings' && (
             <button
               onClick={approveFindings}
@@ -280,7 +316,6 @@ export default function ProjectDetailPage() {
           )}
         </div>
 
-        {/* Progress Bar */}
         <div className="mt-4">
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>Discovery</span>
@@ -297,16 +332,9 @@ export default function ProjectDetailPage() {
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Main Data */}
         <div className="lg:col-span-2 space-y-6">
           {/* Interviews */}
-          <Section 
-            title="Interviews" 
-            icon={<MessageSquare size={20} />}
-            count={interviews.length}
-            actionLink={`/projects/${projectId}/interviews/new`}
-            actionLabel="Schedule Interview"
-          >
+          <Section title="Interviews" icon={<MessageSquare size={20} />} count={interviews.length}>
             {interviews.length === 0 ? (
               <EmptyState message="No interviews yet" />
             ) : (
@@ -338,11 +366,7 @@ export default function ProjectDetailPage() {
           </Section>
 
           {/* Findings */}
-          <Section 
-            title="Findings" 
-            icon={<Lightbulb size={20} />}
-            count={findings.length}
-          >
+          <Section title="Findings" icon={<Lightbulb size={20} />} count={findings.length}>
             {findings.length === 0 ? (
               <EmptyState message="No findings yet. Run analysis on interviews to extract findings." />
             ) : (
@@ -376,11 +400,7 @@ export default function ProjectDetailPage() {
           </Section>
 
           {/* Tasks */}
-          <Section 
-            title="Tasks" 
-            icon={<CheckSquare size={20} />}
-            count={tasks.length}
-          >
+          <Section title="Tasks" icon={<CheckSquare size={20} />} count={tasks.length}>
             {tasks.length === 0 ? (
               <EmptyState message="No tasks yet. Create a PRD and break it down into tasks." />
             ) : (
@@ -399,18 +419,15 @@ export default function ProjectDetailPage() {
                   </div>
                 ))}
                 {tasks.length > 8 && (
-                  <Link href={`/tasks?project=${projectId}`} className="text-sm text-blue-600 hover:text-blue-700 block text-center">
-                    View all {tasks.length} tasks
-                  </Link>
+                  <p className="text-sm text-gray-500 text-center">+ {tasks.length - 8} more tasks</p>
                 )}
               </div>
             )}
           </Section>
         </div>
 
-        {/* Right Column - Sidebar */}
+        {/* Right Column */}
         <div className="space-y-6">
-          {/* Project Info */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-900 mb-4">Project Info</h3>
             <dl className="space-y-3">
@@ -422,37 +439,36 @@ export default function ProjectDetailPage() {
                 <dt className="text-sm text-gray-500">Last Updated</dt>
                 <dd className="text-sm font-medium">{new Date(project.updated_at).toLocaleDateString()}</dd>
               </div>
-              {project.findings_approved && (
+              {project.findings_approved && project.findings_approved_at && (
                 <div>
                   <dt className="text-sm text-gray-500">Findings Approved</dt>
                   <dd className="text-sm font-medium text-green-600 flex items-center gap-1">
                     <CheckCircle size={14} />
-                    {new Date(project.findings_approved_at!).toLocaleDateString()}
+                    {new Date(project.findings_approved_at).toLocaleDateString()}
                   </dd>
                 </div>
               )}
-              {project.prd_approved && (
+              {project.prd_approved && project.prd_approved_at && (
                 <div>
                   <dt className="text-sm text-gray-500">PRD Approved</dt>
                   <dd className="text-sm font-medium text-green-600 flex items-center gap-1">
                     <CheckCircle size={14} />
-                    {new Date(project.prd_approved_at!).toLocaleDateString()}
+                    {new Date(project.prd_approved_at).toLocaleDateString()}
                   </dd>
                 </div>
               )}
-              {project.qa_approved && (
+              {project.qa_approved && project.qa_approved_at && (
                 <div>
                   <dt className="text-sm text-gray-500">QA Approved</dt>
                   <dd className="text-sm font-medium text-green-600 flex items-center gap-1">
                     <CheckCircle size={14} />
-                    {new Date(project.qa_approved_at!).toLocaleDateString()}
+                    {new Date(project.qa_approved_at).toLocaleDateString()}
                   </dd>
                 </div>
               )}
             </dl>
           </div>
 
-          {/* Assets */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-900 mb-4">Assets</h3>
             {assets.length === 0 ? (
@@ -476,7 +492,6 @@ export default function ProjectDetailPage() {
             )}
           </div>
 
-          {/* PRDs */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-900 mb-4">PRDs</h3>
             {prds.length === 0 ? (
@@ -498,35 +513,14 @@ export default function ProjectDetailPage() {
   );
 }
 
-function Section({ 
-  title, 
-  icon, 
-  count, 
-  actionLink, 
-  actionLabel, 
-  children 
-}: { 
-  title: string; 
-  icon: React.ReactNode; 
-  count?: number;
-  actionLink?: string;
-  actionLabel?: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, icon, count, children }: { title: string; icon: React.ReactNode; count?: number; children: React.ReactNode }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-gray-400">{icon}</span>
-          <h3 className="font-semibold text-gray-900">{title}</h3>
-          {count !== undefined && (
-            <span className="text-sm text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{count}</span>
-          )}
-        </div>
-        {actionLink && (
-          <Link href={actionLink} className="text-sm text-blue-600 hover:text-blue-700">
-            {actionLabel}
-          </Link>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-gray-400">{icon}</span>
+        <h3 className="font-semibold text-gray-900">{title}</h3>
+        {count !== undefined && (
+          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{count}</span>
         )}
       </div>
       {children}
@@ -535,9 +529,5 @@ function Section({
 }
 
 function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-6 text-gray-500 text-sm">
-      {message}
-    </div>
-  );
+  return <div className="text-center py-6 text-gray-500 text-sm">{message}</div>;
 }

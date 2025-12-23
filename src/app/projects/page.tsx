@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { Project, ProjectStatus } from '@/types/database';
 import { 
   Plus, 
   Search,
@@ -11,12 +10,10 @@ import {
   List,
   ChevronRight,
   Clock,
-  CheckCircle,
   AlertCircle
 } from 'lucide-react';
 
-// Status configuration
-const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; description: string }> = {
+const STATUS_CONFIG: Record<string, { label: string; color: string; description: string }> = {
   discovery: { label: 'Discovery', color: 'blue', description: 'Conducting interviews' },
   analysis: { label: 'Analysis', color: 'purple', description: 'Analyzing transcripts' },
   review_findings: { label: 'Review Findings', color: 'yellow', description: 'Awaiting your approval' },
@@ -32,17 +29,24 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; descr
   on_hold: { label: 'On Hold', color: 'gray', description: 'Paused' },
 };
 
-// Board columns (grouped statuses)
 const BOARD_COLUMNS = [
-  { id: 'discovery', label: 'Discovery', statuses: ['discovery', 'analysis'] as ProjectStatus[] },
-  { id: 'review', label: 'Review', statuses: ['review_findings', 'review_prd', 'review_qa'] as ProjectStatus[] },
-  { id: 'build', label: 'Build', statuses: ['documentation', 'prd_creation', 'task_breakdown', 'development'] as ProjectStatus[] },
-  { id: 'test', label: 'Test', statuses: ['user_testing', 'iteration'] as ProjectStatus[] },
-  { id: 'done', label: 'Done', statuses: ['completed', 'on_hold'] as ProjectStatus[] },
+  { id: 'discovery', label: 'Discovery', statuses: ['discovery', 'analysis'] },
+  { id: 'review', label: 'Review', statuses: ['review_findings', 'review_prd', 'review_qa'] },
+  { id: 'build', label: 'Build', statuses: ['documentation', 'prd_creation', 'task_breakdown', 'development'] },
+  { id: 'test', label: 'Test', statuses: ['user_testing', 'iteration'] },
+  { id: 'done', label: 'Done', statuses: ['completed', 'on_hold'] },
 ];
 
+interface ProjectData {
+  id: string;
+  name: string;
+  status: string;
+  updated_at: string;
+  organization: { name: string } | null;
+}
+
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectData[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'board' | 'list'>('board');
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,13 +59,13 @@ export default function ProjectsPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from('projects')
-      .select('*, organization:organizations(*)')
+      .select('id, name, status, updated_at, organization:organizations(name)')
       .order('updated_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching projects:', error);
     } else {
-      setProjects(data || []);
+      setProjects((data || []) as ProjectData[]);
     }
     setLoading(false);
   }
@@ -75,13 +79,8 @@ export default function ProjectsPage() {
     return filteredProjects.filter(p => column.statuses.includes(p.status));
   };
 
-  const needsApproval = (project: Project) => {
-    return ['review_findings', 'review_prd', 'review_qa'].includes(project.status);
-  };
-
   return (
     <div className="p-8">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Projects</h1>
@@ -96,7 +95,6 @@ export default function ProjectsPage() {
         </Link>
       </div>
 
-      {/* Toolbar */}
       <div className="flex items-center gap-4 mb-6">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -130,7 +128,6 @@ export default function ProjectsPage() {
           <p className="text-gray-500 mt-2">Loading projects...</p>
         </div>
       ) : viewMode === 'board' ? (
-        /* Board View */
         <div className="flex gap-4 overflow-x-auto pb-4">
           {BOARD_COLUMNS.map((column) => (
             <div key={column.id} className="flex-shrink-0 w-72">
@@ -156,7 +153,6 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : (
-        /* List View */
         <div className="bg-white rounded-xl shadow-sm border border-gray-200">
           <table className="w-full">
             <thead>
@@ -205,8 +201,8 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
-  const config = STATUS_CONFIG[project.status];
+function ProjectCard({ project }: { project: ProjectData }) {
+  const config = STATUS_CONFIG[project.status] || STATUS_CONFIG['discovery'];
   const isReview = ['review_findings', 'review_prd', 'review_qa'].includes(project.status);
 
   return (
@@ -234,8 +230,8 @@ function ProjectCard({ project }: { project: Project }) {
   );
 }
 
-function StatusBadge({ status, size = 'md' }: { status: ProjectStatus; size?: 'sm' | 'md' }) {
-  const config = STATUS_CONFIG[status];
+function StatusBadge({ status, size = 'md' }: { status: string; size?: 'sm' | 'md' }) {
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG['discovery'];
   const sizeClasses = size === 'sm' ? 'text-xs px-2 py-0.5' : 'text-sm px-2.5 py-1';
   
   return (

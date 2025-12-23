@@ -4,12 +4,17 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { Organization } from '@/types/database';
 import { ArrowLeft, Plus } from 'lucide-react';
+
+interface OrganizationData {
+  id: string;
+  name: string;
+  industry: string | null;
+}
 
 export default function NewProjectPage() {
   const router = useRouter();
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [organizations, setOrganizations] = useState<OrganizationData[]>([]);
   const [loading, setLoading] = useState(false);
   const [showNewOrg, setShowNewOrg] = useState(false);
 
@@ -28,9 +33,9 @@ export default function NewProjectPage() {
   async function fetchOrganizations() {
     const { data } = await supabase
       .from('organizations')
-      .select('*')
+      .select('id, name, industry')
       .order('name');
-    setOrganizations(data || []);
+    setOrganizations((data || []) as OrganizationData[]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,7 +45,6 @@ export default function NewProjectPage() {
     try {
       let orgId = formData.organization_id;
 
-      // Create new organization if needed
       if (showNewOrg && formData.newOrgName) {
         const { data: newOrg, error: orgError } = await supabase
           .from('organizations')
@@ -48,14 +52,13 @@ export default function NewProjectPage() {
             name: formData.newOrgName,
             industry: formData.newOrgIndustry || null,
           })
-          .select()
+          .select('id')
           .single();
 
         if (orgError) throw orgError;
-        orgId = newOrg.id;
+        orgId = (newOrg as { id: string }).id;
       }
 
-      // Create project
       const { data: project, error: projectError } = await supabase
         .from('projects')
         .insert({
@@ -64,12 +67,12 @@ export default function NewProjectPage() {
           organization_id: orgId || null,
           status: 'discovery',
         })
-        .select()
+        .select('id')
         .single();
 
       if (projectError) throw projectError;
 
-      router.push(`/projects/${project.id}`);
+      router.push(`/projects/${(project as { id: string }).id}`);
     } catch (error) {
       console.error('Error creating project:', error);
       alert('Failed to create project');
@@ -89,7 +92,6 @@ export default function NewProjectPage() {
       <p className="text-gray-600 mb-8">Create a new client engagement</p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Project Name */}
         <div>
           <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
             Project Name *
@@ -105,7 +107,6 @@ export default function NewProjectPage() {
           />
         </div>
 
-        {/* Description */}
         <div>
           <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
             Description
@@ -120,7 +121,6 @@ export default function NewProjectPage() {
           />
         </div>
 
-        {/* Organization */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Organization / Client
@@ -191,7 +191,6 @@ export default function NewProjectPage() {
           )}
         </div>
 
-        {/* Submit */}
         <div className="flex items-center gap-4 pt-4">
           <button
             type="submit"
