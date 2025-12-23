@@ -84,7 +84,7 @@ export default function ProjectDetailPage() {
       .single();
 
     if (projectData) {
-      setProject(projectData);
+      setProject(projectData as unknown as Project);
     }
 
     // Fetch related data
@@ -96,17 +96,25 @@ export default function ProjectDetailPage() {
       supabase.from('assets').select('*').eq('project_id', projectId),
     ]);
 
-    setInterviews(interviewsRes.data || []);
-    setFindings(findingsRes.data || []);
-    setPrds(prdsRes.data || []);
-    setTasks(tasksRes.data || []);
-    setAssets(assetsRes.data || []);
+    setInterviews((interviewsRes.data || []) as unknown as Interview[]);
+    setFindings((findingsRes.data || []) as unknown as Finding[]);
+    setPrds((prdsRes.data || []) as unknown as PRD[]);
+    setTasks((tasksRes.data || []) as unknown as Task[]);
+    setAssets((assetsRes.data || []) as unknown as Asset[]);
     setLoading(false);
   }
 
   async function approveFindings() {
     setActionLoading(true);
-    const { error } = await supabase.rpc('approve_findings', { p_project_id: projectId });
+    // Use direct update instead of RPC to avoid type issues
+    const { error } = await supabase
+      .from('projects')
+      .update({ 
+        findings_approved: true, 
+        findings_approved_at: new Date().toISOString(),
+        status: 'documentation' as ProjectStatus
+      })
+      .eq('id', projectId);
     if (!error) {
       await fetchProjectData();
     }
@@ -115,7 +123,14 @@ export default function ProjectDetailPage() {
 
   async function approvePrd() {
     setActionLoading(true);
-    const { error } = await supabase.rpc('approve_prd', { p_project_id: projectId });
+    const { error } = await supabase
+      .from('projects')
+      .update({ 
+        prd_approved: true, 
+        prd_approved_at: new Date().toISOString(),
+        status: 'task_breakdown' as ProjectStatus
+      })
+      .eq('id', projectId);
     if (!error) {
       await fetchProjectData();
     }
@@ -124,7 +139,14 @@ export default function ProjectDetailPage() {
 
   async function approveQa() {
     setActionLoading(true);
-    const { error } = await supabase.rpc('approve_qa', { p_project_id: projectId });
+    const { error } = await supabase
+      .from('projects')
+      .update({ 
+        qa_approved: true, 
+        qa_approved_at: new Date().toISOString(),
+        status: 'user_testing' as ProjectStatus
+      })
+      .eq('id', projectId);
     if (!error) {
       await fetchProjectData();
     }
